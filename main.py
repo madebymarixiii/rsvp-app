@@ -29,6 +29,11 @@ LOCKOUT_SECONDS = 15 * 60
 
 app = Flask(__name__)
 app.secret_key = APP_SECRET
+# Allow sessions inside iframe (for Elementor embeds)
+app.config.update(
+    SESSION_COOKIE_SAMESITE="None",   # required for cross-site iframe
+    SESSION_COOKIE_SECURE=True        # required when SameSite=None (HTTPS)
+)
 
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
@@ -171,14 +176,10 @@ def init_db():
                 dietary TEXT DEFAULT '',
                 attendee_names_json TEXT NOT NULL DEFAULT '[]',
                 answers_json TEXT NOT NULL DEFAULT '{}',
-                contact_email TEXT DEFAULT '',
-                contact_phone TEXT DEFAULT '',
                 updated_at TEXT NOT NULL
             )
         """)
         # safe migrations (postgres)
-        con.execute("ALTER TABLE rsvps ADD COLUMN IF NOT EXISTS contact_email TEXT DEFAULT ''")
-        con.execute("ALTER TABLE rsvps ADD COLUMN IF NOT EXISTS contact_phone TEXT DEFAULT ''")
         con.commit()
         return
 
@@ -221,8 +222,6 @@ def init_db():
             dietary TEXT DEFAULT '',
             attendee_names_json TEXT NOT NULL DEFAULT '[]',
             answers_json TEXT NOT NULL DEFAULT '{}',
-            contact_email TEXT DEFAULT '',
-            contact_phone TEXT DEFAULT '',
             updated_at TEXT NOT NULL,
             FOREIGN KEY(guest_id) REFERENCES guests(id) ON DELETE CASCADE
         )
@@ -366,7 +365,6 @@ def dashboard():
     rsvps = con.execute("""
         SELECT g.first_name, g.last_name, g.seats,
                r.attending, r.dietary, r.attendee_names_json, r.answers_json,
-               r.contact_email, r.contact_phone, r.updated_at
         FROM guests g
         LEFT JOIN rsvps r ON r.guest_id=g.id
         WHERE g.client_id=?
@@ -538,7 +536,6 @@ def admin_export_rsvps():
     rows = con.execute("""
         SELECT g.first_name, g.last_name, g.seats,
                r.attending, r.dietary, r.attendee_names_json, r.answers_json,
-               r.contact_email, r.contact_phone, r.updated_at
         FROM guests g
         LEFT JOIN rsvps r ON r.guest_id=g.id
         WHERE g.client_id=?
@@ -549,7 +546,6 @@ def admin_export_rsvps():
     writer = csv.writer(output)
     writer.writerow([
         "first_name", "last_name", "reserved_seats",
-        "contact_email", "contact_phone",
         "attending", "dietary", "attendee_names",
         *q_labels,
         "updated_at"
@@ -569,7 +565,6 @@ def admin_export_rsvps():
 
         writer.writerow([
             r["first_name"], r["last_name"], r["seats"],
-            (r.get("contact_email") or ""), (r.get("contact_phone") or ""),
             (r.get("attending") or ""), (r.get("dietary") or ""), attendee_names,
             *q_values,
             (r.get("updated_at") or "")
@@ -645,8 +640,6 @@ def rsvp_form(slug):
 
     existing_attending = existing["attending"] if existing else None
     existing_dietary = existing["dietary"] if existing else ""
-    existing_email = (existing.get("contact_email") if existing else "") or ""
-    existing_phone = (existing.get("contact_phone") if existing else "") or ""
     existing_attendees = []
     existing_answers = {}
 
@@ -666,8 +659,6 @@ def rsvp_form(slug):
     if request.method == "POST":
         contact_first = (request.form.get("contact_first") or guest["first_name"]).strip()
         contact_last = (request.form.get("contact_last") or guest["last_name"]).strip()
-        contact_email = (request.form.get("contact_email") or "").strip()
-        contact_phone = (request.form.get("contact_phone") or "").strip()
 
         attending = request.form.get("attending", "yes")
         if attending not in ("yes", "no"):
@@ -696,17 +687,14 @@ def rsvp_form(slug):
             INSERT INTO rsvps(
                 guest_id, attending, dietary,
                 attendee_names_json, answers_json,
-                contact_email, contact_phone,
                 updated_at
-            ) VALUES(?,?,?,?,?,?,?,?)
+            ) VALUES(?,?,?,?,?,?)
         """, (
             guest["id"],
             attending,
             dietary,
             json.dumps(attendee_names),
-            json.dumps(answers),
-            contact_email,
-            contact_phone,
+            json.dumps(answers),          
             now
         ))
         con.commit()
@@ -725,8 +713,6 @@ def rsvp_form(slug):
         existing_dietary=existing_dietary,
         existing_attendees=existing_attendees,
         existing_answers=existing_answers,
-        existing_email=existing_email,
-        existing_phone=existing_phone,
         embed=embed
     )
 
