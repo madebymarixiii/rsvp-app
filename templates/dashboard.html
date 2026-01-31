@@ -1,0 +1,211 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/style.css">
+  <title>Dashboard</title>
+</head>
+<body>
+  <div class="container">
+
+    <div class="card">
+      <div class="topbar">
+        <div>
+          <h2>{{ client.display_name or "Your Wedding" }}</h2>
+          <p>Manage guests, RSVP responses, and custom questions.</p>
+        </div>
+        <div class="actions">
+          <a href="/logout">Logout</a>
+        </div>
+      </div>
+
+      <div class="grid3">
+        <div class="card" style="margin:0; box-shadow:none;">
+          <div class="badge">Guests</div>
+          <h2 style="margin-top:10px;">{{ stats.total }}</h2>
+          <p class="small">Total guest records</p>
+        </div>
+
+        <div class="card" style="margin:0; box-shadow:none;">
+          <div class="badge">Responded</div>
+          <h2 style="margin-top:10px;">{{ stats.responded }}</h2>
+          <p class="small">RSVP submitted</p>
+        </div>
+
+        <div class="card" style="margin:0; box-shadow:none;">
+          <div class="badge">Yes / No</div>
+          <h2 style="margin-top:10px;">{{ stats.yes }} / {{ stats.no }}</h2>
+          <p class="small">Attendance responses</p>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px;">
+        <h2 style="margin:0 0 6px 0;">Your RSVP Link</h2>
+        <p class="small">Use embed link for Elementor (transparent background).</p>
+
+        <label>Public RSVP URL</label>
+        <input readonly value="{{ request.host_url }}rsvp/{{ client.slug }}">
+
+        <label>Embed URL (transparent)</label>
+        <input readonly value="{{ request.host_url }}rsvp/{{ client.slug }}?embed=1">
+
+        <div class="actions">
+          <a href="/admin/export_guests">Download Guests CSV</a>
+          <a href="/admin/export_rsvps">Download RSVPs CSV</a>
+        </div>
+      </div>
+    </div>
+
+
+    <div class="card">
+      <h2 style="margin:0 0 6px 0;">Add Guest</h2>
+
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <div class="flash">{{ messages[0] }}</div>
+        {% endif %}
+      {% endwith %}
+
+      <form method="post" action="/admin/add_guest">
+        <div class="row">
+          <div>
+            <label>First Name*</label>
+            <input name="first_name" required>
+          </div>
+          <div>
+            <label>Last Name*</label>
+            <input name="last_name" required>
+          </div>
+        </div>
+
+        <div style="max-width:220px;">
+          <label>Reserved Seats</label>
+          <input name="seats" type="number" min="1" max="20" value="1">
+          <p class="small">If seats = 2, guest can enter 2 attendee names.</p>
+        </div>
+
+        <button type="submit">Add Guest</button>
+      </form>
+
+      <hr style="border:none;border-top:1px solid var(--line);margin:18px 0;">
+
+      <h2 style="margin:0 0 6px 0;">Import Guests (CSV)</h2>
+      <p class="small">CSV columns: <b>first_name</b>, <b>last_name</b>, <b>seats</b></p>
+
+      <form method="post" action="/admin/import_guests" enctype="multipart/form-data">
+        <label>Upload CSV</label>
+        <input type="file" name="csvfile" accept=".csv" required>
+        <button type="submit">Import CSV</button>
+      </form>
+    </div>
+
+
+    <div class="card">
+      <h2 style="margin:0 0 6px 0;">Custom Questions</h2>
+      <p class="small">Add extra questions (meal choice, song request, etc.).</p>
+
+      <form method="post" action="/admin/add_question">
+        <label>Question Label*</label>
+        <input name="label" placeholder="e.g., Meal preference" required>
+
+        <div class="row">
+          <div>
+            <label>Field Type</label>
+            <select name="field_type">
+              <option value="text">Short text</option>
+              <option value="textarea">Long text</option>
+              <option value="select">Dropdown</option>
+            </select>
+          </div>
+          <div>
+            <label>Dropdown Options (comma-separated)</label>
+            <input name="options" placeholder="Beef, Chicken, Fish">
+            <p class="small">Only used when Field Type = Dropdown.</p>
+          </div>
+        </div>
+
+        <button type="submit">Add Question</button>
+      </form>
+
+      {% if questions|length > 0 %}
+        <div style="margin-top:14px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Question</th>
+                <th>Type</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for q in questions %}
+                <tr>
+                  <td>{{ q.label }}</td>
+                  <td>{{ q.field_type }}</td>
+                  <td style="width:140px;">
+                    <form method="post" action="/admin/delete_question/{{ q.id }}">
+                      <button type="submit" style="margin-top:0;background:#fff;color:var(--brand2);border:1px solid var(--line);">
+                        Delete
+                      </button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% endif %}
+    </div>
+
+
+    <div class="card">
+      <h2 style="margin:0 0 6px 0;">RSVP Responses</h2>
+      <p class="small">Live responses from your invited guests.</p>
+
+      <div style="overflow:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Guest</th>
+              <th>Seats</th>
+              <th>Attending</th>
+              <th>Contact</th>
+              <th>Dietary</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rsvps %}
+              <tr>
+                <td><b>{{ r.first_name }} {{ r.last_name }}</b></td>
+                <td>{{ r.seats }}</td>
+                <td>
+                  {% if r.attending == "yes" %}
+                    <span class="badge">YES</span>
+                  {% elif r.attending == "no" %}
+                    <span class="badge" style="background:rgba(0,0,0,.06);color:#111;">NO</span>
+                  {% else %}
+                    <span class="small">No response</span>
+                  {% endif %}
+                </td>
+                <td class="small">
+                  {% if r.contact_email %}{{ r.contact_email }}<br>{% endif %}
+                  {% if r.contact_phone %}{{ r.contact_phone }}{% endif %}
+                </td>
+                <td class="small">{{ r.dietary or "" }}</td>
+                <td class="small">{{ r.updated_at or "" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <p class="small" style="margin-top:10px;">
+        For complete attendee names + custom answers, use “Download RSVPs CSV”.
+      </p>
+    </div>
+
+  </div>
+</body>
+</html>

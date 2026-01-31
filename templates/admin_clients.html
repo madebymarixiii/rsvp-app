@@ -1,0 +1,98 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/style.css">
+  <title>Admin Clients</title>
+</head>
+<body>
+  <div class="container">
+
+    <div class="card">
+      <div class="topbar">
+        <div>
+          <h2>Create Client Dashboard</h2>
+          <p>Create logins for your wedding website clients.</p>
+        </div>
+        <div class="actions">
+          <a href="/admin/logout">Logout</a>
+        </div>
+      </div>
+
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <div class="flash">{{ messages[0] }}</div>
+        {% endif %}
+      {% endwith %}
+
+      <form method="post">
+        <label>Client Display Name</label>
+        <input name="display_name" placeholder="e.g., Anna & Mike">
+
+        <div class="row">
+          <div>
+            <label>Client Email*</label>
+            <input name="email" type="email" placeholder="client@email.com" required>
+          </div>
+          <div>
+            <label>Client Password*</label>
+            <input name="password" placeholder="Set a password" required>
+          </div>
+        </div>
+
+        <label>Slug (used in RSVP link)*</label>
+        <input name="slug" placeholder="e.g., anna-mike" required>
+
+        <button type="submit">Create Client</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="topbar">
+        <div>
+          <h2>Existing Clients</h2>
+          <p>Delete is permanent (removes guests + RSVPs for that client).</p>
+        </div>
+        <span class="badge">List</span>
+      </div>
+
+      <div style="overflow:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Display</th>
+              <th>Email</th>
+              <th>Slug</th>
+              <th>RSVP Link</th>
+              <th style="width:140px;">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for c in clients %}
+              <tr>
+                <td>{{ c.id }}</td>
+                <td><b>{{ c.display_name or "" }}</b></td>
+                <td>{{ c.email }}</td>
+                <td>{{ c.slug }}</td>
+                <td class="small">{{ request.host_url }}rsvp/{{ c.slug }}?embed=1</td>
+                <td>
+                  <form method="post" action="/admin/clients/{{ c.id }}/delete"
+                        onsubmit="return confirm('Delete this client permanently? This will remove guests + RSVPs.');">
+                    <button type="submit"
+                      style="margin-top:0;background:#fff;color:var(--brand2);border:1px solid var(--line);">
+                      Delete
+                    </button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>

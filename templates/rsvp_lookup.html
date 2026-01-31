@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/style.css">
+  <title>RSVP</title>
+</head>
+<body class="{% if embed %}embed{% endif %}">
+  <div class="container">
+    <div class="card">
+      <div class="topbar">
+        <div>
+          <h2>Find Your Invitation</h2>
+          <p>Enter your first and last name.</p>
+        </div>
+        <span class="badge">RSVP</span>
+      </div>
+
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <div class="flash">{{ messages[0] }}</div>
+        {% endif %}
+      {% endwith %}
+
+      {% if locked %}
+        <p><b>Too many attempts.</b> Please try again in ~{{ mins }} minute(s).</p>
+      {% else %}
+        <form method="post">
+          <div class="row">
+            <div>
+              <label>First Name*</label>
+              <input name="first_name" required>
+            </div>
+            <div>
+              <label>Last Name*</label>
+              <input name="last_name" required>
+            </div>
+          </div>
+          <button type="submit">Continue</button>
+        </form>
+        <p class="small" style="margin-top:10px;">If you can’t find your name, please contact the couple.</p>
+      {% endif %}
+    </div>
+  </div>
+</body>
+</html>
