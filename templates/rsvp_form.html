@@ -2,63 +2,45 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="/static/style.css">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>RSVP</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body class="{{ 'embed' if embed else '' }}">
-  <div class="rsvp-container">
-    <div class="rsvp-card">
-      <div class="topbar">
-        <div>
-          <h2>RSVP</h2>
-          <p>Reserved seats: <span class="badge">{{ seats }}</span></p>
-        </div>
-        <span class="badge">Guests</span>
-      </div>
 
-      {% with messages = get_flashed_messages() %}
-        {% if messages %}
-          <div class="flash">{{ messages[0] }}</div>
-        {% endif %}
-      {% endwith %}
+<body class="rsvp-page {{ 'embed' if embed else '' }}">
+  <div class="container rsvp-wrap">
+    <div class="rsvp-shell">
 
-      <form method="post">
-        <h2 style="margin-top:0;">Contact Info</h2>
+      <form method="post" class="rsvp-form">
 
-        <div class="row">
-          <div>
-            <label>First Name*</label>
-            <input name="contact_first" value="{{ guest['first_name'] }}" required>
-          </div>
-          <div>
-            <label>Last Name*</label>
-            <input name="contact_last" value="{{ guest['last_name'] }}" required>
-          </div>
-        </div>
-
-        <label style="margin-top:14px;">Will you attend?</label>
+        <label>WILL YOU ATTEND?</label>
         <select name="attending">
           <option value="yes" {% if existing_attending=='yes' %}selected{% endif %}>Yes, I will attend</option>
-          <option value="no" {% if existing_attending=='no' %}selected{% endif %}>No, I can't attend</option>
+          <option value="no"  {% if existing_attending=='no'  %}selected{% endif %}>No, I can’t attend</option>
         </select>
 
+        <label>DIETARY REQUESTS</label>
+        <textarea name="dietary" placeholder="Allergies, restrictions, etc.">{{ existing_dietary }}</textarea>
+
         {% if extra_count > 0 %}
-          <p class="small" style="margin-top:14px;"><b>Additional attendee names</b> (up to {{ extra_count }})</p>
-          {% for i in range(2, seats+1) %}
-            <label>Guest {{ i }} full name</label>
-            <input name="attendee_{{ i }}" placeholder="Full name"
-              value="{{ existing_attendees[i-1] if existing_attendees|length >= i else '' }}">
+          <div class="rsvp-help" style="margin-top:10px;">
+            You have {{ seats }} reserved seat(s). Please enter the other attendee name(s).
+          </div>
+
+          <label>NAME</label>
+          <input name="main_name" placeholder="{{ guest.first_name }} {{ guest.last_name }}"
+                 value="{{ (existing_attendees[0] if existing_attendees and existing_attendees|length>0 else '') }}">
+
+          {% for i in range(extra_count) %}
+            <label>ATTENDEE {{ i+2 }}</label>
+            <input name="attendee_{{ i+2 }}" placeholder="Full name"
+                   value="{{ existing_attendees[i+1] if existing_attendees and existing_attendees|length>(i+1) else '' }}">
           {% endfor %}
         {% endif %}
 
-        <label style="margin-top:14px;">Dietary requests (optional)</label>
-        <textarea name="dietary" placeholder="Allergies, restrictions, etc.">{{ existing_dietary }}</textarea>
-
-        {% if questions|length > 0 %}
-          <p class="small" style="margin-top:14px;"><b>More questions</b></p>
+        {% if questions %}
           {% for q in questions %}
-            <label>{{ q.label }}</label>
+            <label>{{ q.label|upper }}</label>
 
             {% if q.field_type == 'textarea' %}
               <textarea name="q_{{ q.id }}">{{ existing_answers.get(q.label,'') }}</textarea>
@@ -75,9 +57,21 @@
           {% endfor %}
         {% endif %}
 
-        <button type="submit">Save RSVP</button>
-        <p class="small" style="margin-top:10px;">You can come back anytime and update your RSVP.</p>
+        <button type="submit" class="rsvp-btn">SUBMIT</button>
+
+        <div class="rsvp-help">
+          You can come back anytime and update your RSVP.
+        </div>
+
       </form>
+
+      <!-- ✅ SUCCESS MESSAGE NOW AT THE VERY BOTTOM -->
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <div class="rsvp-success">{{ messages[0] }}</div>
+        {% endif %}
+      {% endwith %}
+
     </div>
   </div>
 </body>

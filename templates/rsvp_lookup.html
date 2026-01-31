@@ -2,45 +2,44 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="/static/style.css">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>RSVP</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body class="{% if embed %}embed{% endif %}">
-  <div class="container">
-    <div class="card">
-      <div class="topbar">
-        <div>
-          <h2>Find Your Invitation</h2>
-          <p>Enter your first and last name.</p>
-        </div>
-        <span class="badge">RSVP</span>
-      </div>
+
+<body class="rsvp-page {{ 'embed' if embed else '' }}">
+  <div class="container rsvp-wrap">
+    <div class="rsvp-shell">
+
+      {% if locked %}
+        <div class="rsvp-note">Too many attempts. Try again in about {{ mins }} minute(s).</div>
+      {% endif %}
 
       {% with messages = get_flashed_messages() %}
         {% if messages %}
-          <div class="flash">{{ messages[0] }}</div>
+          <div class="rsvp-note">{{ messages[0] }}</div>
         {% endif %}
       {% endwith %}
 
-      {% if locked %}
-        <p><b>Too many attempts.</b> Please try again in ~{{ mins }} minute(s).</p>
-      {% else %}
-        <form method="post">
-          <div class="row">
-            <div>
-              <label>First Name*</label>
-              <input name="first_name" required>
-            </div>
-            <div>
-              <label>Last Name*</label>
-              <input name="last_name" required>
-            </div>
+      <form method="post" class="rsvp-form">
+        <div class="rsvp-grid2">
+          <div>
+            <label>FIRST NAME</label>
+            <input name="first_name" autocomplete="given-name" required>
           </div>
-          <button type="submit">Continue</button>
-        </form>
-        <p class="small" style="margin-top:10px;">If you can’t find your name, please contact the couple.</p>
-      {% endif %}
+          <div>
+            <label>LAST NAME</label>
+            <input name="last_name" autocomplete="family-name" required>
+          </div>
+        </div>
+
+        <button type="submit" class="rsvp-btn">CONTINUE</button>
+
+        <div class="rsvp-help">
+          If you can’t find your name, please contact the couple.
+        </div>
+      </form>
+
     </div>
   </div>
 </body>

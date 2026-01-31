@@ -17,7 +17,7 @@
 *{box-sizing:border-box}
 body{
   margin:0;
-  font-family:system-ui,Segoe UI,Arial;
+  font-family: Helvetica, Arial, sans-serif;
   color:var(--ink);
   background:var(--bg);
 }
@@ -31,16 +31,6 @@ a{color:inherit}
   border:1px solid var(--line);
   padding:24px;
   margin-bottom:18px;
-}
-
-body.embed{background:transparent}
-body.embed .container{padding:0; max-width:900px}
-body.embed .card{
-  background:var(--glass);
-  border:1px solid var(--glassLine);
-  box-shadow:none;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
 }
 
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px}
@@ -114,28 +104,180 @@ th{color:var(--muted);font-weight:800}
   font-weight:800;
 }
 .actions a:hover{background:rgba(255,255,255,.8)}
-/* Transparent RSVP embed look */
-.rsvp-container {
-    background: rgba(255,255,255,0.0);
-    backdrop-filter: blur(2px);
-    padding: 20px;
-    max-width: 600px;
-    margin: auto;
+
+/* ============ EMBED BASE (general) ============ */
+body.embed{background:transparent}
+body.embed .container{padding:0; max-width:900px}
+body.embed .card{
+  background:var(--glass);
+  border:1px solid var(--glassLine);
+  box-shadow:none;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
-.rsvp-card {
-    background: rgba(255,255,255,0.85);
-    border-radius: 14px;
-    padding: 28px;
-    box-shadow: 0 10px 30px rgba(0,0,0,.08);
+/* =========================
+   RSVP ONLY STYLES
+   (does NOT affect dashboards)
+   ========================= */
+
+/* RSVP transparent background in embed */
+body.rsvp-page.embed{
+  background: transparent !important;
 }
 
-body.embed {
-    background: transparent;
+/* RSVP card boxy + clean */
+body.rsvp-page .card{
+  border-radius: 4px !important;
+  box-shadow: none !important;
 }
 
-input, select, textarea {
-    background: rgba(255,255,255,0.95);
-    border-radius: 10px;
-    border: 1px solid #ddd;
+/* RSVP inputs boxy + black border */
+body.rsvp-page input,
+body.rsvp-page select,
+body.rsvp-page textarea{
+  border: 1.5px solid #000 !important;
+  border-radius: 4px !important;
+  background: transparent !important;
+  padding: 14px !important;
+  font-size: 15px !important;
 }
+
+/* RSVP button transparent + black border */
+body.rsvp-page button{
+  background: transparent !important;
+  border: 2px solid #000 !important;
+  color: #000 !important;
+  border-radius: 4px !important;
+  padding: 14px !important;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  letter-spacing: .08em !important;
+  text-transform: uppercase !important;
+  transition: all .2s ease;
+}
+
+body.rsvp-page button:hover{
+  background: #000 !important;
+  color:#fff !important;
+}
+
+/* remove badge/pill ONLY on RSVP */
+body.rsvp-page .badge{ display:none !important; }
+
+/* smaller title feel on RSVP pages */
+body.rsvp-page h2, body.rsvp-page h3{
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+/* =====================================
+   RSVP PAGES ONLY (minimal black/boxy)
+   Does NOT affect admin/client dashboards
+   ===================================== */
+
+body.rsvp-page{
+  font-family: Helvetica, Arial, sans-serif;
+  background: #fff;
+  color:#000;
+}
+
+body.rsvp-page.embed{
+  background: transparent !important;
+}
+
+/* Centering wrapper (keeps padding modest) */
+body.rsvp-page .rsvp-wrap{
+  max-width: 920px;
+  padding: 22px 16px;
+}
+
+/* The white panel (or transparent if embedded) */
+body.rsvp-page .rsvp-shell{
+  background: transparent;
+  padding: 8px;
+}
+
+/* Grid two fields */
+body.rsvp-page .rsvp-grid2{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+@media (max-width:720px){
+  body.rsvp-page .rsvp-grid2{ grid-template-columns:1fr; }
+}
+
+/* Labels like screenshot */
+body.rsvp-page label{
+  display:block;
+  font-size:12px;
+  font-weight:700;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  margin: 12px 0 6px;
+  color:#000;
+}
+
+/* Inputs: boxy + black border */
+body.rsvp-page input,
+body.rsvp-page select,
+body.rsvp-page textarea{
+  width:100%;
+  border: 1.5px solid #000 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color:#000 !important;
+  padding: 12px 12px !important;
+  font-size: 15px !important;
+  outline:none;
+  box-shadow:none !important;
+}
+
+/* Textarea height similar */
+body.rsvp-page textarea{
+  min-height: 110px;
+  resize: vertical;
+}
+
+/* Button: transparent with black border */
+body.rsvp-page .rsvp-btn{
+  width:100%;
+  margin-top: 16px;
+  background: transparent !important;
+  border: 1.5px solid #000 !important;
+  border-radius: 0 !important;
+  color:#000 !important;
+  padding: 14px !important;
+  font-weight:800;
+  letter-spacing:.10em;
+  text-transform:uppercase;
+  cursor:pointer;
+}
+
+/* Optional hover */
+body.rsvp-page .rsvp-btn:hover{
+  background:#000 !important;
+  color:#fff !important;
+}
+
+/* Small helper text */
+body.rsvp-page .rsvp-help{
+  margin-top: 10px;
+  font-size: 12px;
+  color:#000;
+  opacity:.75;
+}
+
+/* Flash/notes */
+body.rsvp-page .rsvp-success{
+  margin-top: 18px;
+  padding: 14px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  letter-spacing: .03em;
+  background: transparent;
+}
+
+/* Hide any pill/badge if present */
+body.rsvp-page .badge{ display:none !important; }

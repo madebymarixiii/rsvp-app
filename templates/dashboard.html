@@ -9,6 +9,7 @@
 <body>
   <div class="container">
 
+    <!-- TOP CARD -->
     <div class="card">
       <div class="topbar">
         <div>
@@ -40,24 +41,15 @@
         </div>
       </div>
 
-      <div class="card" style="margin-top:14px;">
-        <h2 style="margin:0 0 6px 0;">Your RSVP Link</h2>
-        <p class="small">Use embed link for Elementor (transparent background).</p>
-
-        <label>Public RSVP URL</label>
-        <input readonly value="{{ request.host_url }}rsvp/{{ client.slug }}">
-
-        <label>Embed URL (transparent)</label>
-        <input readonly value="{{ request.host_url }}rsvp/{{ client.slug }}?embed=1">
-
-        <div class="actions">
-          <a href="/admin/export_guests">Download Guests CSV</a>
-          <a href="/admin/export_rsvps">Download RSVPs CSV</a>
-        </div>
+      <!-- Download button (NO extra card wrapper) -->
+      <div class="actions" style="margin-top:14px;">
+        <a href="/admin/export_rsvps">Download RSVPs CSV</a>
       </div>
     </div>
+    <!-- END TOP CARD -->
 
 
+    <!-- ADD + IMPORT GUESTS -->
     <div class="card">
       <h2 style="margin:0 0 6px 0;">Add Guest</h2>
 
@@ -101,6 +93,7 @@
     </div>
 
 
+    <!-- CUSTOM QUESTIONS -->
     <div class="card">
       <h2 style="margin:0 0 6px 0;">Custom Questions</h2>
       <p class="small">Add extra questions (meal choice, song request, etc.).</p>
@@ -159,6 +152,7 @@
     </div>
 
 
+    <!-- RSVP RESPONSES -->
     <div class="card">
       <h2 style="margin:0 0 6px 0;">RSVP Responses</h2>
       <p class="small">Live responses from your invited guests.</p>
@@ -170,7 +164,6 @@
               <th>Guest</th>
               <th>Seats</th>
               <th>Attending</th>
-              <th>Contact</th>
               <th>Dietary</th>
               <th>Updated</th>
             </tr>
@@ -188,10 +181,6 @@
                   {% else %}
                     <span class="small">No response</span>
                   {% endif %}
-                </td>
-                <td class="small">
-                  {% if r.contact_email %}{{ r.contact_email }}<br>{% endif %}
-                  {% if r.contact_phone %}{{ r.contact_phone }}{% endif %}
                 </td>
                 <td class="small">{{ r.dietary or "" }}</td>
                 <td class="small">{{ r.updated_at or "" }}</td>
