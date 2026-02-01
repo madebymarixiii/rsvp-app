@@ -13,6 +13,9 @@
 
       <form method="post" class="rsvp-form">
 
+        <!-- ✅ IMPORTANT: token survives submit (Safari iframe fix) -->
+        <input type="hidden" name="t" value="{{ request.args.get('t','') }}">
+
         <label>WILL YOU ATTEND?</label>
         <select name="attending">
           <option value="yes" {% if existing_attending=='yes' %}selected{% endif %}>Yes, I will attend</option>
@@ -65,7 +68,6 @@
 
       </form>
 
-      <!-- ✅ SUCCESS MESSAGE NOW AT THE VERY BOTTOM -->
       {% with messages = get_flashed_messages() %}
         {% if messages %}
           <div class="rsvp-success">{{ messages[0] }}</div>
