@@ -6,6 +6,7 @@ import os
 import sqlite3
 from datetime import datetime
 from urllib.parse import urlparse
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
@@ -29,11 +30,15 @@ LOCKOUT_SECONDS = 15 * 60
 
 app = Flask(__name__)
 app.secret_key = APP_SECRET
-# Allow sessions inside iframe (for Elementor embeds)
+# Trust Railway proxy headers (so Flask knows it's HTTPS)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+
+# Allow session cookie inside cross-site iframe (Elementor)
 app.config.update(
-    SESSION_COOKIE_SAMESITE="None",   # required for cross-site iframe
-    SESSION_COOKIE_SECURE=True        # required when SameSite=None (HTTPS)
+    SESSION_COOKIE_SAMESITE="None",  # required for iframe
+    SESSION_COOKIE_SECURE=True,      # required when SameSite=None (HTTPS)
 )
+
 
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
