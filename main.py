@@ -8,7 +8,7 @@ from datetime import datetime
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    flash, session, send_file, g, abort
+    flash, session, send_file, g, abort, jsonify
 )
 from flask_login import (
     LoginManager, login_user, login_required, logout_user,
@@ -59,8 +59,12 @@ def _client_ip():
     )
 
 
+def _tries_key(slug: str) -> str:
+    return f"{slug}:{_client_ip()}"
+
+
 def check_lock(slug: str):
-    key = f"{slug}:{_client_ip()}"
+    key = _tries_key(slug)
     rec = _RSVP_TRIES.get(key)
     now = time.time()
     if rec and rec.get("locked_until", 0) > now:
@@ -70,13 +74,26 @@ def check_lock(slug: str):
 
 
 def bump_try(slug: str):
-    key = f"{slug}:{_client_ip()}"
+    key = _tries_key(slug)
     rec = _RSVP_TRIES.get(key, {"count": 0, "locked_until": 0})
     rec["count"] += 1
     if rec["count"] >= MAX_TRIES:
         rec["locked_until"] = time.time() + LOCK_MINUTES * 60
-        rec["count"] = 0
+        rec["count"] = 0  # reset after lock starts
     _RSVP_TRIES[key] = rec
+
+
+def attempts_left(slug: str) -> int:
+    key = _tries_key(slug)
+    rec = _RSVP_TRIES.get(key, {"count": 0, "locked_until": 0})
+    if rec.get("locked_until", 0) > time.time():
+        return 0
+    return max(0, MAX_TRIES - int(rec.get("count", 0)))
+
+
+def reset_tries(slug: str):
+    key = _tries_key(slug)
+    _RSVP_TRIES.pop(key, None)
 
 
 # =========================
@@ -88,13 +105,11 @@ app.secret_key = APP_SECRET
 # Trust Railway proxy headers (so Flask knows it is HTTPS)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
-# You can keep these for non-Safari browsers / normal tabs
-# Safari iframe may still block cookies; RSVP flow below does NOT depend on sessions.
+# Cookies allowed for normal pages; RSVP flow below does NOT depend on cookies.
 app.config.update(
     SESSION_COOKIE_SAMESITE="None",
     SESSION_COOKIE_SECURE=True,
 )
-
 
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
@@ -291,6 +306,12 @@ def init_db():
 # =========================
 def norm(s: str) -> str:
     return " ".join((s or "").strip().lower().split())
+
+
+def titlecase_name(s: str) -> str:
+    # "maRiCar" -> "Maricar"
+    s = (s or "").strip()
+    return s[:1].upper() + s[1:].lower() if s else ""
 
 
 def is_embed() -> bool:
@@ -570,7 +591,6 @@ def admin_export_rsvps():
     qs = questions_for_client(cid)
     q_labels = [q["label"] for q in qs]
 
-    # ✅ FIXED SQL (no trailing comma before FROM)
     rows = con.execute("""
         SELECT
             g.first_name, g.last_name, g.seats,
@@ -621,6 +641,47 @@ def admin_export_rsvps():
 # =========================
 # Public RSVP (Safari iframe safe)
 # =========================
+
+# ✅ FIRST-NAME AUTOCOMPLETE (masked last initial)
+@app.route("/rsvp/<slug>/suggest", methods=["GET"])
+def rsvp_suggest(slug):
+    init_db()
+    con = get_db()
+
+    client = client_by_slug(slug)
+    if not client:
+        return jsonify({"items": []}), 404
+
+    q = (request.args.get("q") or "").strip()
+    qn = norm(q)
+    if len(qn) < 2:
+        return jsonify({"items": []})
+
+    # prevent abuse / huge strings
+    qn = qn[:30]
+    like = f"{qn}%"
+
+    rows = con.execute("""
+        SELECT first_name, last_name
+        FROM guests
+        WHERE client_id = ?
+          AND lower(trim(first_name)) LIKE ?
+        ORDER BY first_name, last_name
+        LIMIT 8
+    """, (client["id"], like)).fetchall()
+
+    items = []
+    for r in rows:
+        fn = titlecase_name(r.get("first_name") or "")
+        ln = (r.get("last_name") or "").strip()
+        masked = (ln[:1].upper() + ".") if ln else ""
+        # show: "Maricar G."
+        label = (fn + (" " + masked if masked else "")).strip()
+        items.append({"label": label, "first_name": fn})
+
+    return jsonify({"items": items})
+
+
 @app.route("/rsvp/<slug>", methods=["GET", "POST"])
 def rsvp_lookup(slug):
     init_db()
@@ -642,7 +703,8 @@ def rsvp_lookup(slug):
             embed=embed,
             error=None,
             first_name="",
-            last_name=""
+            last_name="",
+            attempts_left=0
         )
 
     error = None
@@ -657,7 +719,13 @@ def rsvp_lookup(slug):
         if not guest:
             bump_try(slug)
             locked2, mins2 = check_lock(slug)
-            error = "Sorry — we can’t find your name. Please try again."
+            left = attempts_left(slug)
+
+            if locked2:
+                error = f"Too many attempts. Try again in about {mins2} minute(s)."
+            else:
+                error = f"Sorry — we can’t find your name. Attempts left: {left}"
+
             return render_template(
                 "rsvp_lookup.html",
                 client=client,
@@ -666,8 +734,12 @@ def rsvp_lookup(slug):
                 embed=embed,
                 error=error,
                 first_name=first_name,
-                last_name=last_name
+                last_name=last_name,
+                attempts_left=left
             )
+
+        # ✅ success: reset tries so they don’t get punished later
+        reset_tries(slug)
 
         t = make_token(APP_SECRET, client["id"], guest["id"])
         return redirect(url_for("rsvp_form", slug=slug, embed=("1" if embed else None), t=t))
@@ -680,7 +752,8 @@ def rsvp_lookup(slug):
         embed=embed,
         error=error,
         first_name=first_name,
-        last_name=last_name
+        last_name=last_name,
+        attempts_left=attempts_left(slug)
     )
 
 

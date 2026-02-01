@@ -15,21 +15,35 @@
         <div class="rsvp-note">Too many attempts. Try again in about {{ mins }} minute(s).</div>
       {% endif %}
 
-      {% with messages = get_flashed_messages() %}
-        {% if messages %}
-          <div class="rsvp-note">{{ messages[0] }}</div>
-        {% endif %}
-      {% endwith %}
+      {% if error %}
+        <div class="rsvp-note">{{ error }}</div>
+      {% endif %}
 
-      <form method="post" class="rsvp-form">
+      <form method="post" class="rsvp-form" autocomplete="on">
         <div class="rsvp-grid2">
-          <div>
+          <div style="position:relative;">
             <label>FIRST NAME</label>
-            <input name="first_name" autocomplete="given-name" required>
+            <input
+              id="firstName"
+              name="first_name"
+              autocomplete="given-name"
+              required
+              value="{{ first_name or '' }}"
+            >
+
+            <!-- ✅ Suggestions dropdown -->
+            <div class="rsvp-suggest" id="suggestBox" style="display:none;"></div>
           </div>
+
           <div>
             <label>LAST NAME</label>
-            <input name="last_name" autocomplete="family-name" required>
+            <input
+              id="lastName"
+              name="last_name"
+              autocomplete="family-name"
+              required
+              value="{{ last_name or '' }}"
+            >
           </div>
         </div>
 
@@ -38,9 +52,75 @@
         <div class="rsvp-help">
           If you can’t find your name, please contact the couple.
         </div>
+
+        {% if not locked %}
+          <div class="rsvp-help rsvp-attempts">
+            Attempts left: {{ attempts_left }}
+          </div>
+        {% endif %}
       </form>
 
     </div>
   </div>
+
+  <script>
+    (function(){
+      const slug = "{{ client.slug }}";
+      const first = document.getElementById("firstName");
+      const last  = document.getElementById("lastName");
+      const box   = document.getElementById("suggestBox");
+
+      let timer = null;
+
+      function hide(){
+        box.style.display = "none";
+        box.innerHTML = "";
+      }
+
+      function render(items){
+        if(!items || items.length === 0){ hide(); return; }
+        box.innerHTML = items.map(it =>
+          `<button type="button" class="rsvp-suggest-item" data-first="${it.first_name}">
+            ${it.label}
+          </button>`
+        ).join("");
+        box.style.display = "block";
+      }
+
+      first.addEventListener("input", () => {
+        clearTimeout(timer);
+        const q = (first.value || "").trim();
+        if(q.length < 2){ hide(); return; }
+
+        timer = setTimeout(async () => {
+          try{
+            const res = await fetch(`/rsvp/${encodeURIComponent(slug)}/suggest?q=${encodeURIComponent(q)}`, {
+              credentials: "omit" // no cookies needed
+            });
+            const data = await res.json();
+            render(data.items || []);
+          }catch(e){
+            hide();
+          }
+        }, 220);
+      });
+
+      box.addEventListener("click", (e) => {
+        const btn = e.target.closest(".rsvp-suggest-item");
+        if(!btn) return;
+        first.value = btn.dataset.first || "";
+        hide();
+        last.focus();
+      });
+
+      document.addEventListener("click", (e) => {
+        if(e.target === first || box.contains(e.target)) return;
+        hide();
+      });
+
+      // optional: hide when typing last name
+      last.addEventListener("input", hide);
+    })();
+  </script>
 </body>
 </html>
