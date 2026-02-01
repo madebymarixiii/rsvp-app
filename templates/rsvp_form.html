@@ -13,8 +13,8 @@
 
       <form method="post" class="rsvp-form">
 
-        <!-- ✅ IMPORTANT: token survives submit (Safari iframe fix) -->
-        <input type="hidden" name="t" value="{{ request.args.get('t','') }}">
+        <!-- ✅ IMPORTANT: keeps token for Safari iframe (no cookies needed) -->
+        <input type="hidden" name="t" value="{{ token or request.args.get('t','') }}">
 
         <label>WILL YOU ATTEND?</label>
         <select name="attending">
@@ -31,13 +31,19 @@
           </div>
 
           <label>NAME</label>
-          <input name="main_name" placeholder="{{ guest.first_name }} {{ guest.last_name }}"
-                 value="{{ (existing_attendees[0] if existing_attendees and existing_attendees|length>0 else '') }}">
+          <input
+            name="main_name"
+            placeholder="{{ guest.first_name }} {{ guest.last_name }}"
+            value="{{ (existing_attendees[0] if existing_attendees and existing_attendees|length>0 else '') }}"
+          >
 
           {% for i in range(extra_count) %}
             <label>ATTENDEE {{ i+2 }}</label>
-            <input name="attendee_{{ i+2 }}" placeholder="Full name"
-                   value="{{ existing_attendees[i+1] if existing_attendees and existing_attendees|length>(i+1) else '' }}">
+            <input
+              name="attendee_{{ i+2 }}"
+              placeholder="Full name"
+              value="{{ existing_attendees[i+1] if existing_attendees and existing_attendees|length>(i+1) else '' }}"
+            >
           {% endfor %}
         {% endif %}
 
@@ -68,11 +74,12 @@
 
       </form>
 
-      {% with messages = get_flashed_messages() %}
-        {% if messages %}
-          <div class="rsvp-success">{{ messages[0] }}</div>
-        {% endif %}
-      {% endwith %}
+      <!-- ✅ SUCCESS message WITHOUT flash/session -->
+      {% if saved %}
+        <div class="rsvp-success">
+          Thank you! Your RSVP has been saved.
+        </div>
+      {% endif %}
 
     </div>
   </div>
