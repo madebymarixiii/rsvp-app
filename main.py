@@ -1,12 +1,10 @@
 import csv
 import io
 import json
-import time
 import os
 import sqlite3
+import time
 from datetime import datetime
-from urllib.parse import urlparse
-from werkzeug.middleware.proxy_fix import ProxyFix
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
@@ -16,35 +14,94 @@ from flask_login import (
     LoginManager, login_user, login_required, logout_user,
     UserMixin, current_user
 )
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
+from itsdangerous import URLSafeSerializer, BadSignature
+
 
 # =========================
 # CONFIG
 # =========================
 APP_SECRET = os.environ.get("APP_SECRET", "dev-secret-change-me")
-DATABASE_URL = os.environ.get("DATABASE_URL")  # Only on Railway later
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")  # local default ok
+DATABASE_URL = os.environ.get("DATABASE_URL")  # Only when you switch to Postgres later
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")  # Platform admin login
 
-MAX_FAILED_TRIES = 3
-LOCKOUT_SECONDS = 15 * 60
 
+# =========================
+# Safari iframe fix: Token-based RSVP (NO cookies needed)
+# =========================
+def _tok(secret: str):
+    return URLSafeSerializer(secret, salt="rsvp-guest-v1")
+
+
+def make_token(secret: str, client_id: int, guest_id: int) -> str:
+    return _tok(secret).dumps({"cid": int(client_id), "gid": int(guest_id)})
+
+
+def read_token(secret: str, token: str):
+    return _tok(secret).loads(token)
+
+
+# =========================
+# 3 tries lock (session-less), keyed by (slug + ip)
+# =========================
+_RSVP_TRIES = {}  # key -> {"count":int, "locked_until":float}
+LOCK_MINUTES = 5
+MAX_TRIES = 3
+
+
+def _client_ip():
+    return (
+        (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+        or request.headers.get("X-Real-IP")
+        or request.remote_addr
+        or "unknown"
+    )
+
+
+def check_lock(slug: str):
+    key = f"{slug}:{_client_ip()}"
+    rec = _RSVP_TRIES.get(key)
+    now = time.time()
+    if rec and rec.get("locked_until", 0) > now:
+        mins = int((rec["locked_until"] - now + 59) // 60)
+        return True, mins
+    return False, 0
+
+
+def bump_try(slug: str):
+    key = f"{slug}:{_client_ip()}"
+    rec = _RSVP_TRIES.get(key, {"count": 0, "locked_until": 0})
+    rec["count"] += 1
+    if rec["count"] >= MAX_TRIES:
+        rec["locked_until"] = time.time() + LOCK_MINUTES * 60
+        rec["count"] = 0
+    _RSVP_TRIES[key] = rec
+
+
+# =========================
+# Flask App
+# =========================
 app = Flask(__name__)
 app.secret_key = APP_SECRET
-# Trust Railway proxy headers (so Flask knows it's HTTPS)
+
+# Trust Railway proxy headers (so Flask knows it is HTTPS)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
-# Allow session cookie inside cross-site iframe (Elementor)
+# You can keep these for non-Safari browsers / normal tabs
+# Safari iframe may still block cookies; RSVP flow below does NOT depend on sessions.
 app.config.update(
-    SESSION_COOKIE_SAMESITE="None",  # required for iframe
-    SESSION_COOKIE_SECURE=True,      # required when SameSite=None (HTTPS)
+    SESSION_COOKIE_SAMESITE="None",
+    SESSION_COOKIE_SECURE=True,
 )
 
 
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
 
+
 # =========================
-# DB Abstraction: SQLite (local) or Postgres (Railway)
+# DB Abstraction: SQLite (local) or Postgres (Railway later)
 # =========================
 def using_postgres() -> bool:
     return bool(DATABASE_URL) and DATABASE_URL.startswith("postgres")
@@ -116,15 +173,12 @@ def get_db():
         return g.db
 
     if using_postgres():
-        # Postgres for Railway
         import psycopg2
         from psycopg2.extras import RealDictCursor
-
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
         g.db = DBWrapPG(conn)
         return g.db
 
-    # SQLite for local
     conn = sqlite3.connect("local.db")
     conn.row_factory = dict_factory
     g.db = DBWrapSQLite(conn)
@@ -139,7 +193,7 @@ def close_db(_exc):
 
 
 # =========================
-# DB Init (works for SQLite + Postgres)
+# DB Init
 # =========================
 def init_db():
     con = get_db()
@@ -184,11 +238,9 @@ def init_db():
                 updated_at TEXT NOT NULL
             )
         """)
-        # safe migrations (postgres)
         con.commit()
         return
 
-    # SQLite schema
     con.execute("""
         CREATE TABLE IF NOT EXISTS clients (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -290,34 +342,6 @@ def questions_for_client(client_id: int):
 
 
 # =========================
-# RSVP lockout
-# =========================
-def _fail_key(slug: str) -> str:
-    return f"fails:{slug}"
-
-
-def _lock_key(slug: str) -> str:
-    return f"lock:{slug}"
-
-
-def is_locked(slug: str) -> bool:
-    until = session.get(_lock_key(slug))
-    return bool(until and time.time() < float(until))
-
-
-def register_fail(slug: str):
-    fails = int(session.get(_fail_key(slug), 0)) + 1
-    session[_fail_key(slug)] = fails
-    if fails >= MAX_FAILED_TRIES:
-        session[_lock_key(slug)] = time.time() + LOCKOUT_SECONDS
-
-
-def reset_fails(slug: str):
-    session.pop(_fail_key(slug), None)
-    session.pop(_lock_key(slug), None)
-
-
-# =========================
 # Auth (clients)
 # =========================
 class User(UserMixin):
@@ -368,14 +392,15 @@ def dashboard():
     client = con.execute("SELECT * FROM clients WHERE id=?", (cid,)).fetchone()
 
     rsvps = con.execute("""
-        SELECT 
-            g.first_name, 
-            g.last_name, 
+        SELECT
+            g.first_name,
+            g.last_name,
             g.seats,
-            r.attending, 
-            r.dietary, 
-            r.attendee_names_json, 
-            r.answers_json 
+            r.attending,
+            r.dietary,
+            r.attendee_names_json,
+            r.answers_json,
+            r.updated_at
         FROM guests g
         LEFT JOIN rsvps r ON r.guest_id=g.id
         WHERE g.client_id=?
@@ -541,12 +566,16 @@ def admin_export_guests():
 def admin_export_rsvps():
     con = get_db()
     cid = int(current_user.id)
+
     qs = questions_for_client(cid)
     q_labels = [q["label"] for q in qs]
 
+    # ✅ FIXED SQL (no trailing comma before FROM)
     rows = con.execute("""
-        SELECT g.first_name, g.last_name, g.seats,
-               r.attending, r.dietary, r.attendee_names_json, r.answers_json,
+        SELECT
+            g.first_name, g.last_name, g.seats,
+            r.attending, r.dietary, r.attendee_names_json, r.answers_json,
+            r.updated_at
         FROM guests g
         LEFT JOIN rsvps r ON r.guest_id=g.id
         WHERE g.client_id=?
@@ -564,19 +593,23 @@ def admin_export_rsvps():
 
     for r in rows:
         try:
-            attendee_names = ", ".join(json.loads(r["attendee_names_json"] or "[]"))
+            attendee_names = ", ".join(json.loads(r.get("attendee_names_json") or "[]"))
         except Exception:
             attendee_names = ""
         try:
-            answers = json.loads(r["answers_json"] or "{}")
+            answers = json.loads(r.get("answers_json") or "{}")
         except Exception:
             answers = {}
 
         q_values = [answers.get(lbl, "") for lbl in q_labels]
 
         writer.writerow([
-            r["first_name"], r["last_name"], r["seats"],
-            (r.get("attending") or ""), (r.get("dietary") or ""), attendee_names,
+            r.get("first_name", ""),
+            r.get("last_name", ""),
+            r.get("seats", ""),
+            (r.get("attending") or ""),
+            (r.get("dietary") or ""),
+            attendee_names,
             *q_values,
             (r.get("updated_at") or "")
         ])
@@ -586,64 +619,102 @@ def admin_export_rsvps():
 
 
 # =========================
-# Public RSVP
+# Public RSVP (Safari iframe safe)
 # =========================
 @app.route("/rsvp/<slug>", methods=["GET", "POST"])
 def rsvp_lookup(slug):
     init_db()
+    con = get_db()
+
     client = client_by_slug(slug)
     if not client:
         return "Wedding not found", 404
 
     embed = is_embed()
 
-    if is_locked(slug):
-        remaining = int(session.get(_lock_key(slug)) - time.time())
-        mins = max(1, remaining // 60)
-        return render_template("rsvp_lookup.html", client=client, locked=True, mins=mins, embed=embed)
+    locked, mins = check_lock(slug)
+    if locked:
+        return render_template(
+            "rsvp_lookup.html",
+            client=client,
+            locked=True,
+            mins=mins,
+            embed=embed,
+            error=None,
+            first_name="",
+            last_name=""
+        )
+
+    error = None
+    first_name = ""
+    last_name = ""
 
     if request.method == "POST":
-        first = request.form.get("first_name", "")
-        last = request.form.get("last_name", "")
+        first_name = (request.form.get("first_name") or "").strip()
+        last_name = (request.form.get("last_name") or "").strip()
 
-        guest = guest_lookup(client["id"], first, last)
+        guest = guest_lookup(client["id"], first_name, last_name)
         if not guest:
-            register_fail(slug)
-            left = MAX_FAILED_TRIES - int(session.get(_fail_key(slug), 0))
-            if left <= 0:
-                flash("Too many attempts. Please try again later.")
-                return redirect(url_for("rsvp_lookup", slug=slug, embed=("1" if embed else None)))
-            flash(f"Sorry, we couldn't find your invitation. Attempts left: {left}")
-            return redirect(url_for("rsvp_lookup", slug=slug, embed=("1" if embed else None)))
+            bump_try(slug)
+            locked2, mins2 = check_lock(slug)
+            error = "Sorry — we can’t find your name. Please try again."
+            return render_template(
+                "rsvp_lookup.html",
+                client=client,
+                locked=locked2,
+                mins=mins2,
+                embed=embed,
+                error=error,
+                first_name=first_name,
+                last_name=last_name
+            )
 
-        reset_fails(slug)
-        session[f"guest:{slug}"] = int(guest["id"])
-        return redirect(url_for("rsvp_form", slug=slug, embed=("1" if embed else None)))
+        t = make_token(APP_SECRET, client["id"], guest["id"])
+        return redirect(url_for("rsvp_form", slug=slug, embed=("1" if embed else None), t=t))
 
-    return render_template("rsvp_lookup.html", client=client, locked=False, embed=embed)
+    return render_template(
+        "rsvp_lookup.html",
+        client=client,
+        locked=False,
+        mins=0,
+        embed=embed,
+        error=error,
+        first_name=first_name,
+        last_name=last_name
+    )
 
 
 @app.route("/rsvp/<slug>/form", methods=["GET", "POST"])
 def rsvp_form(slug):
     init_db()
+    con = get_db()
+
     client = client_by_slug(slug)
     if not client:
         return "Wedding not found", 404
 
     embed = is_embed()
 
-    guest_id = session.get(f"guest:{slug}")
-    if not guest_id:
+    token = request.args.get("t") or request.form.get("t")
+    if not token:
         return redirect(url_for("rsvp_lookup", slug=slug, embed=("1" if embed else None)))
 
-    con = get_db()
+    try:
+        data = read_token(APP_SECRET, token)
+        cid_from_token = int(data["cid"])
+        gid = int(data["gid"])
+    except BadSignature:
+        return redirect(url_for("rsvp_lookup", slug=slug, embed=("1" if embed else None)))
+
+    if cid_from_token != int(client["id"]):
+        return redirect(url_for("rsvp_lookup", slug=slug, embed=("1" if embed else None)))
+
     guest = con.execute(
         "SELECT * FROM guests WHERE id=? AND client_id=?",
-        (guest_id, client["id"])
+        (gid, client["id"])
     ).fetchone()
 
     if not guest:
-        session.pop(f"guest:{slug}", None)
         return redirect(url_for("rsvp_lookup", slug=slug, embed=("1" if embed else None)))
 
     qs = questions_for_client(client["id"])
@@ -668,17 +739,14 @@ def rsvp_form(slug):
     extra_count = max(0, seats - 1)
 
     if request.method == "POST":
-        contact_first = (request.form.get("contact_first") or guest["first_name"]).strip()
-        contact_last = (request.form.get("contact_last") or guest["last_name"]).strip()
-
         attending = request.form.get("attending", "yes")
         if attending not in ("yes", "no"):
             attending = "yes"
 
         dietary = (request.form.get("dietary") or "").strip()
 
-        main_full = f"{contact_first} {contact_last}".strip()
-        attendee_names = [main_full]
+        main_name = (request.form.get("main_name") or f"{guest['first_name']} {guest['last_name']}").strip()
+        attendee_names = [main_name] if main_name else [f"{guest['first_name']} {guest['last_name']}"]
 
         for i in range(extra_count):
             val = (request.form.get(f"attendee_{i+2}") or "").strip()
@@ -688,8 +756,8 @@ def rsvp_form(slug):
         answers = {}
         for q in qs:
             key = f"q_{q['id']}"
-            val = request.form.get(key) or ""
-            answers[q["label"]] = val.strip()
+            val = (request.form.get(key) or "").strip()
+            answers[q["label"]] = val
 
         now = datetime.now().isoformat(timespec="seconds")
 
@@ -705,13 +773,20 @@ def rsvp_form(slug):
             attending,
             dietary,
             json.dumps(attendee_names),
-            json.dumps(answers),          
+            json.dumps(answers),
             now
         ))
         con.commit()
 
-        flash("Thank you! Your RSVP has been saved.")
-        return redirect(url_for("rsvp_form", slug=slug, embed=("1" if embed else None)))
+        return redirect(url_for(
+            "rsvp_form",
+            slug=slug,
+            embed=("1" if embed else None),
+            t=token,
+            saved="1"
+        ))
+
+    saved = (request.args.get("saved") == "1")
 
     return render_template(
         "rsvp_form.html",
@@ -724,12 +799,14 @@ def rsvp_form(slug):
         existing_dietary=existing_dietary,
         existing_attendees=existing_attendees,
         existing_answers=existing_answers,
-        embed=embed
+        embed=embed,
+        saved=saved,
+        token=token
     )
 
 
 # =========================
-# Platform Admin
+# Platform Admin (create/manage client dashboards)
 # =========================
 @app.route("/admin", methods=["GET", "POST"])
 def admin_login():
@@ -803,9 +880,11 @@ def admin_delete_client(client_id):
     except Exception:
         con.rollback()
         flash("Failed to delete client.")
+
     return redirect(url_for("admin_clients"))
 
 
+# Run locally
 if __name__ == "__main__":
     with app.app_context():
         init_db()
