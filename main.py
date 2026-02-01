@@ -363,8 +363,14 @@ def dashboard():
     client = con.execute("SELECT * FROM clients WHERE id=?", (cid,)).fetchone()
 
     rsvps = con.execute("""
-        SELECT g.first_name, g.last_name, g.seats,
-               r.attending, r.dietary, r.attendee_names_json, r.answers_json,
+        SELECT 
+            g.first_name, 
+            g.last_name, 
+            g.seats,
+            r.attending, 
+            r.dietary, 
+            r.attendee_names_json, 
+            r.answers_json 
         FROM guests g
         LEFT JOIN rsvps r ON r.guest_id=g.id
         WHERE g.client_id=?
