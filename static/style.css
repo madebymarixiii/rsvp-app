@@ -328,3 +328,57 @@ body.rsvp-page .rsvp-suggest-item:active{
   color:#000 !important;
   outline:none;
 }
+/* =========================
+   RSVP Theme Switch (iframe safe)
+   Use ?theme=dark or ?theme=light
+   ========================= */
+
+body.rsvp-page[data-theme="dark"]{
+  color:#fff !important;
+}
+
+body.rsvp-page[data-theme="dark"] label{
+  color:#fff !important;
+}
+
+body.rsvp-page[data-theme="dark"] .rsvp-help{
+  color:#fff !important;
+  opacity:.75;
+}
+
+body.rsvp-page[data-theme="dark"] input,
+body.rsvp-page[data-theme="dark"] select,
+body.rsvp-page[data-theme="dark"] textarea{
+  border-color:#fff !important;
+  color:#fff !important;
+}
+
+body.rsvp-page[data-theme="dark"] input::placeholder,
+body.rsvp-page[data-theme="dark"] textarea::placeholder{
+  color: rgba(255,255,255,.7) !important;
+}
+
+body.rsvp-page[data-theme="dark"] .rsvp-btn{
+  border-color:#fff !important;
+  color:#fff !important;
+}
+
+body.rsvp-page[data-theme="dark"] .rsvp-btn:hover{
+  background:#fff !important;
+  color:#000 !important;
+}
+
+/* suggestion list on dark */
+body.rsvp-page[data-theme="dark"] .rsvp-suggest{
+  background:#111 !important;
+  border-color: rgba(255,255,255,.18) !important;
+}
+
+body.rsvp-page[data-theme="dark"] .rsvp-suggest-item{
+  color:#fff !important;
+}
+
+body.rsvp-page[data-theme="dark"] .rsvp-suggest-item:hover{
+  background: rgba(255,255,255,.12) !important;
+  color:#fff !important;
+}

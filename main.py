@@ -23,8 +23,8 @@ from itsdangerous import URLSafeSerializer, BadSignature
 # CONFIG
 # =========================
 APP_SECRET = os.environ.get("APP_SECRET", "dev-secret-change-me")
-DATABASE_URL = os.environ.get("DATABASE_URL")  # Only when you switch to Postgres later
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")  # Platform admin login
+DATABASE_URL = os.environ.get("DATABASE_URL")  # use on Railway/Postgres
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")  # platform admin password
 
 
 # =========================
@@ -43,7 +43,8 @@ def read_token(secret: str, token: str):
 
 
 # =========================
-# 3 tries lock (session-less), keyed by (slug + ip)
+# 3 tries lock (memory-based), keyed by (slug + ip)
+# NOTE: resets on redeploy/restart (ok for simple use)
 # =========================
 _RSVP_TRIES = {}  # key -> {"count":int, "locked_until":float}
 LOCK_MINUTES = 5
@@ -79,7 +80,7 @@ def bump_try(slug: str):
     rec["count"] += 1
     if rec["count"] >= MAX_TRIES:
         rec["locked_until"] = time.time() + LOCK_MINUTES * 60
-        rec["count"] = 0  # reset after lock starts
+        rec["count"] = 0
     _RSVP_TRIES[key] = rec
 
 
@@ -92,8 +93,7 @@ def attempts_left(slug: str) -> int:
 
 
 def reset_tries(slug: str):
-    key = _tries_key(slug)
-    _RSVP_TRIES.pop(key, None)
+    _RSVP_TRIES.pop(_tries_key(slug), None)
 
 
 # =========================
@@ -105,7 +105,7 @@ app.secret_key = APP_SECRET
 # Trust Railway proxy headers (so Flask knows it is HTTPS)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
-# Cookies allowed for normal pages; RSVP flow below does NOT depend on cookies.
+# Cookies allowed for normal pages; RSVP flow below does NOT depend on cookies
 app.config.update(
     SESSION_COOKIE_SAMESITE="None",
     SESSION_COOKIE_SECURE=True,
@@ -116,7 +116,7 @@ login_manager.login_view = "login"
 
 
 # =========================
-# DB Abstraction: SQLite (local) or Postgres (Railway later)
+# DB Abstraction: SQLite (local) or Postgres (Railway)
 # =========================
 def using_postgres() -> bool:
     return bool(DATABASE_URL) and DATABASE_URL.startswith("postgres")
@@ -256,6 +256,7 @@ def init_db():
         con.commit()
         return
 
+    # SQLite
     con.execute("""
         CREATE TABLE IF NOT EXISTS clients (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -309,13 +310,17 @@ def norm(s: str) -> str:
 
 
 def titlecase_name(s: str) -> str:
-    # "maRiCar" -> "Maricar"
     s = (s or "").strip()
     return s[:1].upper() + s[1:].lower() if s else ""
 
 
 def is_embed() -> bool:
     return (request.args.get("embed") or "").strip().lower() in ("1", "true", "yes")
+
+
+def get_theme() -> str:
+    t = (request.args.get("theme") or request.form.get("theme") or "").strip().lower()
+    return "dark" if t == "dark" else "light"
 
 
 def is_admin():
@@ -355,15 +360,20 @@ def questions_for_client(client_id: int):
     out = []
     for r in rows:
         try:
-            opts = json.loads(r["options_json"] or "[]")
+            opts = json.loads(r.get("options_json") or "[]")
         except Exception:
             opts = []
-        out.append({"id": r["id"], "label": r["label"], "field_type": r["field_type"], "options": opts})
+        out.append({
+            "id": r["id"],
+            "label": r["label"],
+            "field_type": r["field_type"],
+            "options": opts
+        })
     return out
 
 
 # =========================
-# Auth (clients)
+# Auth (client dashboards)
 # =========================
 class User(UserMixin):
     def __init__(self, id_, email):
@@ -642,7 +652,7 @@ def admin_export_rsvps():
 # Public RSVP (Safari iframe safe)
 # =========================
 
-# ✅ FIRST-NAME AUTOCOMPLETE (masked last initial)
+# ✅ First-name autocomplete (masked last initial)
 @app.route("/rsvp/<slug>/suggest", methods=["GET"])
 def rsvp_suggest(slug):
     init_db()
@@ -657,7 +667,6 @@ def rsvp_suggest(slug):
     if len(qn) < 2:
         return jsonify({"items": []})
 
-    # prevent abuse / huge strings
     qn = qn[:30]
     like = f"{qn}%"
 
@@ -675,7 +684,6 @@ def rsvp_suggest(slug):
         fn = titlecase_name(r.get("first_name") or "")
         ln = (r.get("last_name") or "").strip()
         masked = (ln[:1].upper() + ".") if ln else ""
-        # show: "Maricar G."
         label = (fn + (" " + masked if masked else "")).strip()
         items.append({"label": label, "first_name": fn})
 
@@ -692,6 +700,7 @@ def rsvp_lookup(slug):
         return "Wedding not found", 404
 
     embed = is_embed()
+    theme = get_theme()
 
     locked, mins = check_lock(slug)
     if locked:
@@ -701,7 +710,8 @@ def rsvp_lookup(slug):
             locked=True,
             mins=mins,
             embed=embed,
-            error=None,
+            theme=theme,
+            error=f"Too many attempts. Try again in about {mins} minute(s).",
             first_name="",
             last_name="",
             attempts_left=0
@@ -710,6 +720,7 @@ def rsvp_lookup(slug):
     error = None
     first_name = ""
     last_name = ""
+    left = attempts_left(slug)
 
     if request.method == "POST":
         first_name = (request.form.get("first_name") or "").strip()
@@ -719,30 +730,38 @@ def rsvp_lookup(slug):
         if not guest:
             bump_try(slug)
             locked2, mins2 = check_lock(slug)
-            left = attempts_left(slug)
+            left2 = attempts_left(slug)
 
             if locked2:
                 error = f"Too many attempts. Try again in about {mins2} minute(s)."
             else:
-                error = f"Sorry — we can’t find your name. Attempts left: {left}"
+                error = f"Sorry — we can’t find your name. Attempts left: {left2}"
 
+            # IMPORTANT: render directly so Safari keeps the input values
             return render_template(
                 "rsvp_lookup.html",
                 client=client,
                 locked=locked2,
                 mins=mins2,
                 embed=embed,
+                theme=theme,
                 error=error,
                 first_name=first_name,
                 last_name=last_name,
-                attempts_left=left
+                attempts_left=left2
             )
 
-        # ✅ success: reset tries so they don’t get punished later
+        # success -> reset tries
         reset_tries(slug)
 
         t = make_token(APP_SECRET, client["id"], guest["id"])
-        return redirect(url_for("rsvp_form", slug=slug, embed=("1" if embed else None), t=t))
+        return redirect(url_for(
+            "rsvp_form",
+            slug=slug,
+            embed=("1" if embed else None),
+            theme=theme,
+            t=t
+        ))
 
     return render_template(
         "rsvp_lookup.html",
@@ -750,10 +769,11 @@ def rsvp_lookup(slug):
         locked=False,
         mins=0,
         embed=embed,
+        theme=theme,
         error=error,
         first_name=first_name,
         last_name=last_name,
-        attempts_left=attempts_left(slug)
+        attempts_left=left
     )
 
 
@@ -767,20 +787,21 @@ def rsvp_form(slug):
         return "Wedding not found", 404
 
     embed = is_embed()
+    theme = get_theme()
 
     token = request.args.get("t") or request.form.get("t")
     if not token:
-        return redirect(url_for("rsvp_lookup", slug=slug, embed=("1" if embed else None)))
+        return redirect(url_for("rsvp_lookup", slug=slug, embed=("1" if embed else None), theme=theme))
 
     try:
         data = read_token(APP_SECRET, token)
         cid_from_token = int(data["cid"])
         gid = int(data["gid"])
     except BadSignature:
-        return redirect(url_for("rsvp_lookup", slug=slug, embed=("1" if embed else None)))
+        return redirect(url_for("rsvp_lookup", slug=slug, embed=("1" if embed else None), theme=theme))
 
     if cid_from_token != int(client["id"]):
-        return redirect(url_for("rsvp_lookup", slug=slug, embed=("1" if embed else None)))
+        return redirect(url_for("rsvp_lookup", slug=slug, embed=("1" if embed else None), theme=theme))
 
     guest = con.execute(
         "SELECT * FROM guests WHERE id=? AND client_id=?",
@@ -788,7 +809,7 @@ def rsvp_form(slug):
     ).fetchone()
 
     if not guest:
-        return redirect(url_for("rsvp_lookup", slug=slug, embed=("1" if embed else None)))
+        return redirect(url_for("rsvp_lookup", slug=slug, embed=("1" if embed else None), theme=theme))
 
     qs = questions_for_client(client["id"])
     existing = con.execute("SELECT * FROM rsvps WHERE guest_id=?", (guest["id"],)).fetchone()
@@ -800,11 +821,11 @@ def rsvp_form(slug):
 
     if existing:
         try:
-            existing_attendees = json.loads(existing["attendee_names_json"] or "[]")
+            existing_attendees = json.loads(existing.get("attendee_names_json") or "[]")
         except Exception:
             existing_attendees = []
         try:
-            existing_answers = json.loads(existing["answers_json"] or "{}")
+            existing_answers = json.loads(existing.get("answers_json") or "{}")
         except Exception:
             existing_answers = {}
 
@@ -855,6 +876,7 @@ def rsvp_form(slug):
             "rsvp_form",
             slug=slug,
             embed=("1" if embed else None),
+            theme=theme,
             t=token,
             saved="1"
         ))
@@ -873,6 +895,7 @@ def rsvp_form(slug):
         existing_attendees=existing_attendees,
         existing_answers=existing_answers,
         embed=embed,
+        theme=theme,
         saved=saved,
         token=token
     )
