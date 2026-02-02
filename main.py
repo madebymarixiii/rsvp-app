@@ -389,7 +389,8 @@ def login():
     init_db()
     if request.method == "POST":
         email = (request.form.get("email") or "").strip().lower()
-        pw = request.form.get("password") or ""
+        pw = (request.form.get("password") or "").strip()
+
 
         con = get_db()
         row = con.execute("SELECT * FROM clients WHERE email=?", (email,)).fetchone()
