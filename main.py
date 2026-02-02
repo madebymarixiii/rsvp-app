@@ -23,7 +23,7 @@ from itsdangerous import URLSafeSerializer, BadSignature
 # CONFIG
 # =========================
 APP_SECRET = os.environ.get("APP_SECRET", "dev-secret-change-me")
-DATABASE_URL = os.environ.get("DATABASE_URL")  # if you later move to Railway Postgres
+DATABASE_URL = os.environ.get("DATABASE_URL")  # Railway Postgres sets this
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")  # platform admin
 
 
@@ -104,7 +104,8 @@ app.secret_key = APP_SECRET
 # Trust Railway proxy headers (HTTPS awareness)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
-# Cookies may be blocked in Safari iframe; RSVP flow does NOT depend on cookies.
+# Client dashboard/login uses cookies.
+# (RSVP is token-based so it still works even if Safari blocks cookies in iframes)
 app.config.update(
     SESSION_COOKIE_SAMESITE="None",
     SESSION_COOKIE_SECURE=True,
@@ -115,7 +116,7 @@ login_manager.login_view = "login"
 
 
 # =========================
-# DB Abstraction: SQLite (local) or Postgres (Railway later)
+# DB Abstraction: SQLite (local) or Postgres (Railway)
 # =========================
 def using_postgres() -> bool:
     return bool(DATABASE_URL) and DATABASE_URL.startswith("postgres")
@@ -359,10 +360,15 @@ def questions_for_client(client_id: int):
     out = []
     for r in rows:
         try:
-            opts = json.loads(r.get("options_json") or "[]")
+            opts = json.loads((r.get("options_json") if isinstance(r, dict) else r["options_json"]) or "[]")
         except Exception:
             opts = []
-        out.append({"id": r["id"], "label": r["label"], "field_type": r["field_type"], "options": opts})
+        out.append({
+            "id": r["id"],
+            "label": r["label"],
+            "field_type": r["field_type"],
+            "options": opts
+        })
     return out
 
 
@@ -389,8 +395,7 @@ def login():
     init_db()
     if request.method == "POST":
         email = (request.form.get("email") or "").strip().lower()
-        pw = (request.form.get("password") or "").strip()
-
+        pw = (request.form.get("password") or "").strip()  # ✅ helps mobile keyboards
 
         con = get_db()
         row = con.execute("SELECT * FROM clients WHERE email=?", (email,)).fetchone()
@@ -480,7 +485,7 @@ def admin_add_guest():
     return redirect(url_for("dashboard"))
 
 
-# ✅ NEW: delete a guest (client dashboard)
+# ✅ Delete guest (client dashboard)
 @app.route("/admin/delete_guest/<int:guest_id>", methods=["POST"])
 @login_required
 def admin_delete_guest(guest_id):
@@ -837,18 +842,21 @@ def rsvp_form(slug):
 
     existing_attending = existing["attending"] if existing else None
     existing_dietary = existing["dietary"] if existing else ""
-    existing_attendees = []
+    existing_attendees_all = []
     existing_answers = {}
 
     if existing:
         try:
-            existing_attendees = json.loads(existing.get("attendee_names_json") or "[]")
+            existing_attendees_all = json.loads(existing.get("attendee_names_json") or "[]")
         except Exception:
-            existing_attendees = []
+            existing_attendees_all = []
         try:
             existing_answers = json.loads(existing.get("answers_json") or "{}")
         except Exception:
             existing_answers = {}
+
+    # ✅ Only extras should fill the form fields
+    existing_attendees_extras = existing_attendees_all[1:] if len(existing_attendees_all) > 1 else []
 
     seats = int(guest["seats"])
     extra_count = max(0, seats - 1)
@@ -860,13 +868,17 @@ def rsvp_form(slug):
 
         dietary = (request.form.get("dietary") or "").strip()
 
-        main_name = (request.form.get("main_name") or f"{guest['first_name']} {guest['last_name']}").strip()
-        attendee_names = [main_name] if main_name else [f"{guest['first_name']} {guest['last_name']}"]
+        # ✅ Seat 1 ALWAYS primary guest (not editable)
+        primary_full = f"{guest['first_name']} {guest['last_name']}".strip()
 
+        # ✅ Collect ONLY extra attendees (seat 2..N)
+        extras = []
         for i in range(extra_count):
             val = (request.form.get(f"attendee_{i+2}") or "").strip()
             if val:
-                attendee_names.append(val)
+                extras.append(val)
+
+        attendee_names = [primary_full] + extras
 
         answers = {}
         for q in qs:
@@ -913,7 +925,7 @@ def rsvp_form(slug):
         questions=qs,
         existing_attending=existing_attending,
         existing_dietary=existing_dietary,
-        existing_attendees=existing_attendees,
+        existing_attendees=existing_attendees_extras,  # ✅ extras only
         existing_answers=existing_answers,
         embed=embed,
         theme=theme,
@@ -951,7 +963,7 @@ def admin_clients():
 
     if request.method == "POST":
         email = (request.form.get("email") or "").strip().lower()
-        password = request.form.get("password") or ""
+        password = (request.form.get("password") or "").strip()
         slug = (request.form.get("slug") or "").strip().lower()
         display_name = (request.form.get("display_name") or "").strip()
 
@@ -1001,6 +1013,7 @@ def admin_delete_client(client_id):
     return redirect(url_for("admin_clients"))
 
 
+# Run
 if __name__ == "__main__":
     with app.app_context():
         init_db()

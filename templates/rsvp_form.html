@@ -30,19 +30,13 @@
             You have {{ seats }} reserved seat(s). Please enter the other attendee name(s).
           </div>
 
-          <label>NAME</label>
-          <input
-            name="main_name"
-            placeholder="{{ guest.first_name }} {{ guest.last_name }}"
-            value="{{ (existing_attendees[0] if existing_attendees and existing_attendees|length>0 else '') }}"
-          >
 
           {% for i in range(extra_count) %}
             <label>ATTENDEE {{ i+2 }}</label>
             <input
               name="attendee_{{ i+2 }}"
               placeholder="Full name"
-              value="{{ existing_attendees[i+1] if existing_attendees and existing_attendees|length>(i+1) else '' }}"
+              value="{{ existing_attendees[i] if existing_attendees and existing_attendees|length>(i) else '' }}"
             >
           {% endfor %}
         {% endif %}
