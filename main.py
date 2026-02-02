@@ -23,8 +23,8 @@ from itsdangerous import URLSafeSerializer, BadSignature
 # CONFIG
 # =========================
 APP_SECRET = os.environ.get("APP_SECRET", "dev-secret-change-me")
-DATABASE_URL = os.environ.get("DATABASE_URL")  # use on Railway/Postgres
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")  # platform admin password
+DATABASE_URL = os.environ.get("DATABASE_URL")  # if you later move to Railway Postgres
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")  # platform admin
 
 
 # =========================
@@ -43,8 +43,7 @@ def read_token(secret: str, token: str):
 
 
 # =========================
-# 3 tries lock (memory-based), keyed by (slug + ip)
-# NOTE: resets on redeploy/restart (ok for simple use)
+# 3 tries lock (session-less), keyed by (slug + ip)
 # =========================
 _RSVP_TRIES = {}  # key -> {"count":int, "locked_until":float}
 LOCK_MINUTES = 5
@@ -102,10 +101,10 @@ def reset_tries(slug: str):
 app = Flask(__name__)
 app.secret_key = APP_SECRET
 
-# Trust Railway proxy headers (so Flask knows it is HTTPS)
+# Trust Railway proxy headers (HTTPS awareness)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
-# Cookies allowed for normal pages; RSVP flow below does NOT depend on cookies
+# Cookies may be blocked in Safari iframe; RSVP flow does NOT depend on cookies.
 app.config.update(
     SESSION_COOKIE_SAMESITE="None",
     SESSION_COOKIE_SECURE=True,
@@ -116,7 +115,7 @@ login_manager.login_view = "login"
 
 
 # =========================
-# DB Abstraction: SQLite (local) or Postgres (Railway)
+# DB Abstraction: SQLite (local) or Postgres (Railway later)
 # =========================
 def using_postgres() -> bool:
     return bool(DATABASE_URL) and DATABASE_URL.startswith("postgres")
@@ -196,6 +195,7 @@ def get_db():
 
     conn = sqlite3.connect("local.db")
     conn.row_factory = dict_factory
+    conn.execute("PRAGMA foreign_keys = ON;")
     g.db = DBWrapSQLite(conn)
     return g.db
 
@@ -256,7 +256,6 @@ def init_db():
         con.commit()
         return
 
-    # SQLite
     con.execute("""
         CREATE TABLE IF NOT EXISTS clients (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -363,17 +362,12 @@ def questions_for_client(client_id: int):
             opts = json.loads(r.get("options_json") or "[]")
         except Exception:
             opts = []
-        out.append({
-            "id": r["id"],
-            "label": r["label"],
-            "field_type": r["field_type"],
-            "options": opts
-        })
+        out.append({"id": r["id"], "label": r["label"], "field_type": r["field_type"], "options": opts})
     return out
 
 
 # =========================
-# Auth (client dashboards)
+# Auth (clients)
 # =========================
 class User(UserMixin):
     def __init__(self, id_, email):
@@ -424,6 +418,7 @@ def dashboard():
 
     rsvps = con.execute("""
         SELECT
+            g.id as guest_id,
             g.first_name,
             g.last_name,
             g.seats,
@@ -480,6 +475,34 @@ def admin_add_guest():
     except Exception:
         con.rollback()
         flash("Guest already exists (same first + last).")
+
+    return redirect(url_for("dashboard"))
+
+
+# ✅ NEW: delete a guest (client dashboard)
+@app.route("/admin/delete_guest/<int:guest_id>", methods=["POST"])
+@login_required
+def admin_delete_guest(guest_id):
+    init_db()
+    con = get_db()
+    cid = int(current_user.id)
+
+    row = con.execute(
+        "SELECT id, first_name, last_name FROM guests WHERE id=? AND client_id=?",
+        (guest_id, cid)
+    ).fetchone()
+
+    if not row:
+        flash("Guest not found.")
+        return redirect(url_for("dashboard"))
+
+    try:
+        con.execute("DELETE FROM guests WHERE id=? AND client_id=?", (guest_id, cid))
+        con.commit()
+        flash(f"Removed guest: {row.get('first_name','')} {row.get('last_name','')}".strip())
+    except Exception:
+        con.rollback()
+        flash("Failed to remove guest.")
 
     return redirect(url_for("dashboard"))
 
@@ -649,7 +672,7 @@ def admin_export_rsvps():
 
 
 # =========================
-# Public RSVP (Safari iframe safe)
+# Public RSVP
 # =========================
 
 # ✅ First-name autocomplete (masked last initial)
@@ -720,7 +743,6 @@ def rsvp_lookup(slug):
     error = None
     first_name = ""
     last_name = ""
-    left = attempts_left(slug)
 
     if request.method == "POST":
         first_name = (request.form.get("first_name") or "").strip()
@@ -730,14 +752,13 @@ def rsvp_lookup(slug):
         if not guest:
             bump_try(slug)
             locked2, mins2 = check_lock(slug)
-            left2 = attempts_left(slug)
+            left = attempts_left(slug)
 
             if locked2:
                 error = f"Too many attempts. Try again in about {mins2} minute(s)."
             else:
-                error = f"Sorry — we can’t find your name. Attempts left: {left2}"
+                error = f"Sorry — we can’t find your name. Attempts left: {left}"
 
-            # IMPORTANT: render directly so Safari keeps the input values
             return render_template(
                 "rsvp_lookup.html",
                 client=client,
@@ -748,10 +769,9 @@ def rsvp_lookup(slug):
                 error=error,
                 first_name=first_name,
                 last_name=last_name,
-                attempts_left=left2
+                attempts_left=left
             )
 
-        # success -> reset tries
         reset_tries(slug)
 
         t = make_token(APP_SECRET, client["id"], guest["id"])
@@ -773,7 +793,7 @@ def rsvp_lookup(slug):
         error=error,
         first_name=first_name,
         last_name=last_name,
-        attempts_left=left
+        attempts_left=attempts_left(slug)
     )
 
 
@@ -980,7 +1000,6 @@ def admin_delete_client(client_id):
     return redirect(url_for("admin_clients"))
 
 
-# Run locally
 if __name__ == "__main__":
     with app.app_context():
         init_db()

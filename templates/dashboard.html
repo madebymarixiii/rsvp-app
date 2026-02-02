@@ -166,6 +166,7 @@
               <th>Attending</th>
               <th>Dietary</th>
               <th>Updated</th>
+              <th style="width:140px;">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -184,6 +185,14 @@
                 </td>
                 <td class="small">{{ r.dietary or "" }}</td>
                 <td class="small">{{ r.updated_at or "" }}</td>
+                <td>
+                  <form method="post" action="/admin/delete_guest/{{ r.guest_id }}"
+                        onsubmit="return confirm('Delete this guest? This also deletes their RSVP.');">
+                    <button type="submit" style="margin-top:0;background:#fff;color:#111;border:1px solid var(--line);">
+                      Delete Guest
+                    </button>
+                  </form>
+                </td>
               </tr>
             {% endfor %}
           </tbody>
